@@ -5,6 +5,9 @@ class Exercise {
   final String? date;
   final String? difficulty;
   final List<String>? options;
+  final String? answer;
+  final String? explanation;
+  final String? mistakeTip;
 
   const Exercise({
     required this.id,
@@ -13,22 +16,25 @@ class Exercise {
     this.date,
     this.difficulty,
     this.options,
+    this.answer,
+    this.explanation,
+    this.mistakeTip,
   });
 
   factory Exercise.fromJson(Map<String, dynamic> json) {
     return Exercise(
       id: json['id']?.toString() ?? '',
-      type: json['question_type']?.toString() ??
-          json['type']?.toString() ??
-          '',
-      question: json['stem']?.toString() ??
-          json['question']?.toString() ??
-          '',
+      type: json['question_type']?.toString() ?? json['type']?.toString() ?? '',
+      question: json['stem']?.toString() ?? json['question']?.toString() ?? '',
       date: json['date']?.toString() ?? json['created_at']?.toString(),
       difficulty: json['difficulty']?.toString(),
-      options: (json['options'] as List<dynamic>?)
-          ?.map((e) => e.toString())
-          .toList(),
+      options:
+          (json['options'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList(),
+      answer: json['answer']?.toString(),
+      explanation: json['explanation']?.toString(),
+      mistakeTip: json['mistake_tip']?.toString(),
     );
   }
 }
@@ -65,7 +71,8 @@ class Mistake {
       errorType: json['error_type']?.toString() ?? '',
       errorReason: json['error_reason']?.toString() ?? '',
       mastered: (json['mastered'] is bool) ? json['mastered'] as bool : false,
-      reviewCount: (json['review_count'] is int) ? json['review_count'] as int : 0,
+      reviewCount:
+          (json['review_count'] is int) ? json['review_count'] as int : 0,
       createdAt: json['created_at']?.toString(),
     );
   }

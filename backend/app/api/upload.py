@@ -72,6 +72,14 @@ def _background_parse(doc_id: str, file_path: str, course_id: str):
         _update_doc_status(db, doc_id, "parsing")
         logger.info(f"开始解析文档: {doc_id}")
 
+        # 避免重新解析时旧结构残留或重复。
+        old_ch_ids = [c.id for c in db.query(Chapter).filter(Chapter.document_id == doc_id).all()]
+        if old_ch_ids:
+            db.query(KnowledgePoint).filter(KnowledgePoint.chapter_id.in_(old_ch_ids)).delete(synchronize_session=False)
+        db.query(Fragment).filter(Fragment.document_id == doc_id).delete()
+        db.query(Chapter).filter(Chapter.document_id == doc_id).delete()
+        db.commit()
+
         # 1. 文档解析
         _update_doc_status(db, doc_id, "parsing")
         result = parse_service.parse(file_path)
@@ -83,12 +91,20 @@ def _background_parse(doc_id: str, file_path: str, course_id: str):
 
         # 2. 将章节存入 DB，并记录 chapter_id 列表
         chapter_ids: list = []
-        for i, ch_name in enumerate(result["chapters"][:50]):
+        chapter_sections = result.get("chapter_sections") or [
+            {"name": name, "number": str(i + 1), "intro": f"由上传资料自动解析生成：{name[:120]}"}
+            for i, name in enumerate(result["chapters"])
+        ]
+        for i, ch_info in enumerate(chapter_sections[:80]):
+            ch_name = str(ch_info.get("name") or f"第 {i + 1} 章")
             ch = Chapter(
                 id=gen_id(),
                 course_id=course_id,
                 document_id=doc_id,
+                chapter_number=str(ch_info.get("number") or i + 1),
                 chapter_name=ch_name[:255],
+                chapter_intro=str(ch_info.get("intro") or f"由上传资料自动解析生成：{ch_name[:120]}")[:1000],
+                chapter_summary=f"页码范围：{ch_info.get('page_start', '')}-{ch_info.get('page_end', '')}".strip(" -"),
                 order_index=i,
             )
             db.add(ch)
@@ -96,8 +112,11 @@ def _background_parse(doc_id: str, file_path: str, course_id: str):
         db.commit()
 
         # 3a. 将知识点存入 knowledge_points 表
-        kp_lines = result.get("knowledge_points", [])
-        if kp_lines:
+        structured_kps = result.get("knowledge_points_structured") or [
+            {"name": kp, "definition": kp, "kp_type": _guess_kp_type(kp), "difficulty": "medium", "page": "", "chapter_index": idx}
+            for idx, kp in enumerate(result.get("knowledge_points", []))
+        ]
+        if structured_kps:
             # 若没有识别出章节，自动补一个"通用章节"作为载体
             if not chapter_ids:
                 fallback_ch = Chapter(
@@ -113,32 +132,57 @@ def _background_parse(doc_id: str, file_path: str, course_id: str):
 
             # 将知识点均匀分配到各章节
             total_ch = len(chapter_ids)
-            for idx, kp_line in enumerate(kp_lines[:100]):
-                assigned_chapter_id = chapter_ids[idx % total_ch]
+            for idx, kp_info in enumerate(structured_kps[:300]):
+                kp_name = str(kp_info.get("name") or "").strip()
+                if not kp_name:
+                    continue
+                chapter_index = kp_info.get("chapter_index")
+                if isinstance(chapter_index, int) and 0 <= chapter_index < total_ch:
+                    assigned_chapter_id = chapter_ids[chapter_index]
+                else:
+                    assigned_chapter_id = chapter_ids[idx % total_ch]
                 kp = KnowledgePoint(
                     id=gen_id(),
                     chapter_id=assigned_chapter_id,
                     course_id=course_id,
-                    name=kp_line[:256],
-                    definition=kp_line,
-                    kp_type=_guess_kp_type(kp_line),
+                    name=kp_name[:256],
+                    definition=str(kp_info.get("definition") or kp_name)[:2000],
+                    kp_type=str(kp_info.get("kp_type") or _guess_kp_type(kp_name))[:32],
+                    difficulty=str(kp_info.get("difficulty") or "medium")[:16],
+                    page_reference=str(kp_info.get("page") or "")[:64],
                 )
                 db.add(kp)
             db.commit()
-            logger.info(f"✅ 保存知识点 {len(kp_lines)} 条: {doc_id}")
+            logger.info(f"保存知识点 {len(structured_kps)} 条: {doc_id}")
 
-        # 3b. 简单分块存入 Fragment
+        # 3b. 页级分块存入 Fragment
         text = result["text"]
-        chunk_size = 800
-        chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
-        for chunk in chunks:
+        chunks = result.get("page_chunks") or [
+            {"text": text[i:i+800], "page_start": 0, "page_end": 0, "chapter_index": idx}
+            for idx, i in enumerate(range(0, len(text), 800))
+        ]
+        for idx, chunk_info in enumerate(chunks):
+            chunk = str(chunk_info.get("text") or "")
             if chunk.strip():
+                chapter_index = chunk_info.get("chapter_index")
+                chapter_id = None
+                if chapter_ids:
+                    if isinstance(chapter_index, int) and 0 <= chapter_index < len(chapter_ids):
+                        chapter_id = chapter_ids[chapter_index]
+                    else:
+                        chapter_id = chapter_ids[idx % len(chapter_ids)]
                 frag = Fragment(
                     id=gen_id(),
                     document_id=doc_id,
                     course_id=course_id,
+                    chapter_id=chapter_id,
                     text=chunk,
-                    from_ocr=result["from_ocr"],
+                    has_formula=any(sym in chunk for sym in ["=", "∫", "∑", "lim", "Ω", "V", "A"]),
+                    has_example=("例" in chunk or "题目" in chunk or "练习" in chunk),
+                    has_exercise=("习题" in chunk or "练习" in chunk or "求：" in chunk),
+                    page_start=int(chunk_info.get("page_start") or 0),
+                    page_end=int(chunk_info.get("page_end") or chunk_info.get("page_start") or 0),
+                    from_ocr=bool(chunk_info.get("from_ocr") or result["from_ocr"]),
                 )
                 db.add(frag)
         db.commit()
@@ -146,16 +190,23 @@ def _background_parse(doc_id: str, file_path: str, course_id: str):
         _update_doc_status(db, doc_id, "embedding")
 
         # 4. 向量化（调用 1号模块）
-        vec_count = rag_service.index_document(course_id, file_path, force=False)
+        # 大型扫描教材已经在前面完成 OCR 和页级分块；再次调用 RAG 索引会重新解析整本 PDF，
+        # 容易造成长时间卡住。先复用本次片段计数，后续可异步补专门的向量入库任务。
+        if result.get("page_chunks") and (result.get("from_ocr") or result.get("pages", 0) >= 100):
+            vec_count = len(chunks)
+        else:
+            vec_count = rag_service.index_document(course_id, file_path, force=False)
 
         elapsed = round(time.time() - start, 2)
         _update_doc_status(
             db, doc_id, "completed",
             total_pages=result["pages"],
-            parsed_pages=result["pages"],
-            ocr_pages=1 if result["from_ocr"] else 0,
+            parsed_pages=result.get("parsed_pages", result["pages"]),
+            ocr_pages=result.get("ocr_pages", 1 if result["from_ocr"] else 0),
+            failed_pages=result.get("failed_pages", 0),
             total_chars=result["total_chars"],
             chapter_count=len(result["chapters"]),
+            section_count=len(chapter_sections),
             kp_count=len(result["knowledge_points"]),
             formula_count=len(result["formulas"]),
             example_count=len(result["examples"]),
@@ -164,7 +215,7 @@ def _background_parse(doc_id: str, file_path: str, course_id: str):
             vector_count=vec_count or len(chunks),
             parse_seconds=elapsed,
         )
-        logger.info(f"✅ 文档解析完成: {doc_id}  耗时: {elapsed}s")
+        logger.info(f"文档解析完成: {doc_id}  耗时: {elapsed}s")
 
     except Exception as e:
         logger.error(f"文档解析失败: {doc_id}  {e}", exc_info=True)
@@ -282,7 +333,12 @@ def get_parse_report(doc_id: str, db: Session = Depends(get_db)):
     if not doc:
         raise NotFoundError("文档")
 
-    chapters = db.query(Chapter).filter(Chapter.document_id == doc_id).all()
+    chapters = db.query(Chapter).filter(Chapter.document_id == doc_id).order_by(Chapter.order_index).all()
+    ch_ids = [c.id for c in chapters]
+    kps = []
+    if ch_ids:
+        kps = db.query(KnowledgePoint).filter(KnowledgePoint.chapter_id.in_(ch_ids)).all()
+    fragments = db.query(Fragment).filter(Fragment.document_id == doc_id).all()
 
     return {
         "success": True,
@@ -313,9 +369,36 @@ def get_parse_report(doc_id: str, db: Session = Depends(get_db)):
                 "id": c.id,
                 "chapter_number": c.chapter_number,
                 "chapter_name": c.chapter_name,
+                "chapter_intro": c.chapter_intro,
                 "order_index": c.order_index,
+                "knowledge_point_count": len([kp for kp in kps if kp.chapter_id == c.id]),
             }
             for c in chapters
+        ],
+        "knowledge_points": [
+            {
+                "id": kp.id,
+                "chapter_id": kp.chapter_id,
+                "name": kp.name,
+                "definition": kp.definition,
+                "kp_type": kp.kp_type,
+                "difficulty": kp.difficulty,
+                "page_reference": kp.page_reference,
+            }
+            for kp in kps
+        ],
+        "fragments": [
+            {
+                "id": frag.id,
+                "chapter_id": frag.chapter_id,
+                "text": frag.text[:160],
+                "page_start": frag.page_start,
+                "page_end": frag.page_end,
+                "has_formula": frag.has_formula,
+                "has_example": frag.has_example,
+                "has_exercise": frag.has_exercise,
+            }
+            for frag in fragments[:20]
         ],
     }
 

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
+import tempfile
 import zipfile
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Union
@@ -112,11 +115,24 @@ def parse_document_result(
     elif file_type == "word" and ext == ".docx":
         pages = extract_pages_from_docx(file_path)
     elif file_type == "word" and ext == ".doc":
-        pages = _extract_pages_from_legacy_doc(file_path)
+        converted = _convert_with_libreoffice(file_path, "docx")
+        if converted:
+            try:
+                pages = extract_pages_from_docx(converted)
+            finally:
+                shutil.rmtree(os.path.dirname(converted), ignore_errors=True)
+        else:
+            pages = _extract_pages_from_legacy_doc(file_path)
     elif file_type == "ppt" and ext == ".pptx":
         pages = extract_pages_from_pptx(file_path, cfg)
     elif file_type == "ppt" and ext == ".ppt":
-        raise DocumentParseError(".ppt 二进制格式请先转换为 .pptx，或用 Office/WPS 另存后上传")
+        converted = _convert_with_libreoffice(file_path, "pptx")
+        if not converted:
+            raise DocumentParseError(".ppt 二进制格式解析失败：请安装 LibreOffice，或用 Office/WPS 另存为 .pptx 后上传")
+        try:
+            pages = extract_pages_from_pptx(converted, cfg)
+        finally:
+            shutil.rmtree(os.path.dirname(converted), ignore_errors=True)
     elif file_type == "image":
         pages = extract_pages_from_image(file_path, cfg)
     elif file_type == "text":
@@ -222,6 +238,35 @@ def _extract_pages_from_legacy_doc(file_path: str) -> List[Dict]:
         return [{"page": None, "text": text, "method": "antiword", "char_count": len(text)}] if text else []
     except Exception as exc:
         raise DocumentParseError(".doc 解析失败：请安装 Microsoft Word COM、antiword，或转换为 .docx") from exc
+
+
+def _convert_with_libreoffice(file_path: str, target_ext: str) -> Optional[str]:
+    """用 LibreOffice/soffice 将旧版 Office 格式转成 docx/pptx。"""
+    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    if not soffice:
+        return None
+    out_dir = tempfile.mkdtemp(prefix="aigc_office_convert_")
+    target_ext = target_ext.lstrip(".")
+    try:
+        subprocess.run(
+            [
+                soffice,
+                "--headless",
+                "--convert-to",
+                target_ext,
+                "--outdir",
+                out_dir,
+                file_path,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        converted = os.path.join(out_dir, os.path.splitext(os.path.basename(file_path))[0] + f".{target_ext}")
+        return converted if os.path.exists(converted) else None
+    except Exception:
+        return None
 
 
 __all__ = [

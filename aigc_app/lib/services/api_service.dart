@@ -11,9 +11,7 @@ class ApiService {
   final http.Client _client = http.Client();
 
   String get _base => ApiConfig.baseUrl;
-  Map<String, String> get _jsonHeader => {
-        'Content-Type': 'application/json',
-      };
+  Map<String, String> get _jsonHeader => {'Content-Type': 'application/json'};
 
   // ─── helpers ───
 
@@ -24,9 +22,17 @@ class ApiService {
   List<dynamic> _extractList(Map<String, dynamic> body) {
     // response: { success: true, <plural_key>: [...] }
     const possibleKeys = [
-      'courses', 'documents', 'knowledge_points', 'chapters',
-      'exercises', 'mistakes', 'study_plans', 'plans',
-      'exam_papers', 'variants', 'learning_logs',
+      'courses',
+      'documents',
+      'knowledge_points',
+      'chapters',
+      'exercises',
+      'mistakes',
+      'study_plans',
+      'plans',
+      'exam_papers',
+      'variants',
+      'learning_logs',
     ];
     for (final key in possibleKeys) {
       if (body.containsKey(key) && body[key] is List) {
@@ -56,8 +62,10 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> _post(
-      String path, Map<String, dynamic> body,
-      {Duration? timeout}) async {
+    String path,
+    Map<String, dynamic> body, {
+    Duration? timeout,
+  }) async {
     final uri = Uri.parse('$_base$path');
     final resp = await _client
         .post(uri, headers: _jsonHeader, body: jsonEncode(body))
@@ -82,7 +90,9 @@ class ApiService {
   String _parseError(String body) {
     try {
       final j = jsonDecode(body);
-      return j['detail']?.toString() ?? j['error']?.toString() ?? 'Unknown error';
+      return j['detail']?.toString() ??
+          j['error']?.toString() ??
+          'Unknown error';
     } catch (_) {
       return 'HTTP ${body.length > 100 ? body.substring(0, 100) : body}';
     }
@@ -94,7 +104,10 @@ class ApiService {
     return data.map((e) => Course.fromJson(e as Map<String, dynamic>)).toList();
   }
 
-  Future<Map<String, dynamic>> createCourse(String name, {String? description}) async {
+  Future<Map<String, dynamic>> createCourse(
+    String name, {
+    String? description,
+  }) async {
     return _post('/api/courses', {
       'name': name,
       if (description != null) 'description': description,
@@ -134,6 +147,10 @@ class ApiService {
 
   Future<Map<String, dynamic>> getDocumentReport(String docId) async {
     return _get('/api/documents/$docId/report');
+  }
+
+  Future<Map<String, dynamic>> reparseDocument(String docId) async {
+    return _post('/api/documents/$docId/reparse', {});
   }
 
   Future<void> deleteDocument(String docId) async {
@@ -194,6 +211,7 @@ class ApiService {
     List<String> questionTypes = const ['choice', 'calc'],
     String difficulty = 'medium',
     int count = 5,
+    bool fastMode = true,
   }) async {
     return _post('/api/exercises/generate', {
       'course_id': courseId,
@@ -202,6 +220,7 @@ class ApiService {
       'question_types': questionTypes,
       'difficulty': difficulty,
       'count': count,
+      'fast_mode': fastMode,
     }, timeout: ApiConfig.generationTimeout);
   }
 
@@ -325,11 +344,15 @@ class ApiService {
   }
 
   // ─── Voice ASR ───
-  Future<Map<String, dynamic>> voiceAsr(List<int> audioBytes, String filename) async {
+  Future<Map<String, dynamic>> voiceAsr(
+    List<int> audioBytes,
+    String filename,
+  ) async {
     final uri = Uri.parse('$_base/api/voice/asr');
     final request = http.MultipartRequest('POST', uri);
-    request.files.add(http.MultipartFile.fromBytes(
-      'audio', audioBytes, filename: filename));
+    request.files.add(
+      http.MultipartFile.fromBytes('audio', audioBytes, filename: filename),
+    );
     final streamed = await request.send().timeout(const Duration(seconds: 60));
     final resp = await http.Response.fromStream(streamed);
     if (resp.statusCode >= 400) {
@@ -339,11 +362,11 @@ class ApiService {
   }
 
   // ─── Text Similarity ───
-  Future<Map<String, dynamic>> textSimilarity(String textA, String textB) async {
-    return _post('/api/text/similarity', {
-      'text_a': textA,
-      'text_b': textB,
-    });
+  Future<Map<String, dynamic>> textSimilarity(
+    String textA,
+    String textB,
+  ) async {
+    return _post('/api/text/similarity', {'text_a': textA, 'text_b': textB});
   }
 
   void dispose() {

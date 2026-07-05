@@ -15,12 +15,29 @@ router = APIRouter()
 @router.get("/courses", summary="获取课程列表")
 def list_courses(db: Session = Depends(get_db)):
     courses = db.query(Course).order_by(Course.created_at.desc()).limit(100).all()
+    items = []
+    for c in courses:
+        chapters = db.query(Chapter).filter(Chapter.course_id == c.id).all()
+        ch_ids = [ch.id for ch in chapters]
+        kp_count = 0
+        if ch_ids:
+            kp_count = db.query(KnowledgePoint).filter(KnowledgePoint.chapter_id.in_(ch_ids)).count()
+        doc_count = db.query(Fragment.document_id).filter(Fragment.course_id == c.id).distinct().count()
+        items.append(
+            {
+                "id": c.id,
+                "name": c.name,
+                "description": c.description,
+                "chapter_count": len(chapters),
+                "kp_count": kp_count,
+                "document_count": doc_count,
+                "created_at": c.created_at.isoformat() if c.created_at else None,
+            }
+        )
     return {
         "success": True,
         "total": len(courses),
-        "courses": [{"id": c.id, "name": c.name, "description": c.description,
-                     "created_at": c.created_at.isoformat() if c.created_at else None}
-                    for c in courses],
+        "courses": items,
     }
 
 

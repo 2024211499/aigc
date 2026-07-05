@@ -32,6 +32,14 @@ except ImportError:  # 兼容旧环境
 logger = logging.getLogger(__name__)
 
 
+def _shutdown_executor(executor: ThreadPoolExecutor) -> None:
+    """兼容 Python 3.8 及更早环境，避免 cancel_futures 参数导致 OCR 全页失败。"""
+    try:
+        executor.shutdown(wait=False, cancel_futures=True)
+    except TypeError:
+        executor.shutdown(wait=False)
+
+
 @dataclass
 class PageData:
     page: int
@@ -358,10 +366,10 @@ class PDFExtractor:
                     result = future.result(timeout=config.ocr_timeout_seconds)
                 except FutureTimeoutError as exc:
                     future.cancel()
-                    executor.shutdown(wait=False, cancel_futures=True)
+                    _shutdown_executor(executor)
                     raise OCRTimeoutError(f"第 {page_num} 页 OCR 超时: {config.ocr_timeout_seconds}s") from exc
                 finally:
-                    executor.shutdown(wait=False, cancel_futures=True)
+                    _shutdown_executor(executor)
                 result.text = result.text.strip()
                 elapsed_ms = int((time.monotonic() - start) * 1000)
                 cache.put(

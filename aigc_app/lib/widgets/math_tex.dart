@@ -19,7 +19,8 @@ class MathTex extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final textColor = color ?? Theme.of(context).textTheme.bodyLarge?.color ?? Colors.black87;
+    final textColor =
+        color ?? Theme.of(context).textTheme.bodyLarge?.color ?? Colors.black87;
     final normalized = _normalizeFormula(formula);
     try {
       return Math.tex(
@@ -29,11 +30,7 @@ class MathTex extends StatelessWidget {
     } catch (_) {
       return Text(
         normalized,
-        style: TextStyle(
-          fontSize: fontSize,
-          color: textColor,
-          height: 1.5,
-        ),
+        style: TextStyle(fontSize: fontSize, color: textColor, height: 1.5),
       );
     }
   }
@@ -46,10 +43,47 @@ class MathTex extends StatelessWidget {
       text = text.substring(2, text.length - 2);
     } else if (text.startsWith(r'$$') && text.endsWith(r'$$')) {
       text = text.substring(2, text.length - 2);
-    } else if (text.startsWith(r'$') && text.endsWith(r'$') && text.length > 1) {
+    } else if (text.startsWith(r'$') &&
+        text.endsWith(r'$') &&
+        text.length > 1) {
       text = text.substring(1, text.length - 1);
     }
-    return text.trim();
+    return _normalizeLooseFormula(text.replaceAll(r'$', '').trim());
+  }
+
+  String _normalizeLooseFormula(String value) {
+    var text = value.trim();
+    text = text.replaceAll('∫', r'\int ');
+    text = text.replaceAll('√', r'\sqrt');
+    text = text.replaceAll('≤', r'\leq ');
+    text = text.replaceAll('≥', r'\geq ');
+    text = text.replaceAll('·', r'\cdot ');
+    text = text.replaceAll('*', r'\cdot ');
+    text = text.replaceAllMapped(
+      RegExp(r'\be\^\(([^)]+)\)'),
+      (m) => 'e^{${m[1]}}',
+    );
+    text = text.replaceAllMapped(
+      RegExp(r'\be\^([A-Za-z0-9]+)'),
+      (m) => 'e^{${m[1]}}',
+    );
+    text = text.replaceAllMapped(
+      RegExp(r'([A-Za-z0-9])\^\(([^)]+)\)'),
+      (m) => '${m[1]}^{${m[2]}}',
+    );
+    text = text.replaceAllMapped(
+      RegExp(r'([A-Za-z0-9])\^([A-Za-z0-9]+)'),
+      (m) => '${m[1]}^{${m[2]}}',
+    );
+    text = text.replaceAllMapped(
+      RegExp(r'([A-Za-z])_([A-Za-z0-9]+)'),
+      (m) => '${m[1]}_{${m[2]}}',
+    );
+    text = text.replaceAllMapped(
+      RegExp(r'_(\d+)\^(\d+)'),
+      (m) => '_{${m[1]}}^{${m[2]}}',
+    );
+    return text;
   }
 }
 
@@ -60,6 +94,7 @@ bool isLatex(String text) {
       text.contains(r'\[') ||
       text.contains(r'\]') ||
       text.contains(r'$$') ||
+      text.contains(r'$') ||
       text.contains(r'\frac') ||
       text.contains(r'\lim') ||
       text.contains(r'\int') ||
@@ -84,24 +119,43 @@ class SmartText extends StatelessWidget {
   Widget build(BuildContext context) {
     final segments = _splitInlineMath(text);
     if (segments.length == 1 && segments.first.isMath) {
-      return MathTex(text, fontSize: fontSize, color: color);
+      return _scrollableMath(segments.first.text);
     }
     if (segments.any((segment) => segment.isMath)) {
-      return Wrap(
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          for (final segment in segments)
-            segment.isMath
-                ? Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 2),
-                    child: MathTex(segment.text, fontSize: fontSize, color: color, inline: true),
-                  )
-                : Text(segment.text, style: TextStyle(fontSize: fontSize, color: color, height: 1.5)),
-        ],
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          return Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              for (final segment in segments)
+                segment.isMath
+                    ? ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth:
+                            constraints.maxWidth.isFinite
+                                ? constraints.maxWidth
+                                : 320,
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 2),
+                        child: _scrollableMath(segment.text),
+                      ),
+                    )
+                    : Text(
+                      segment.text,
+                      style: TextStyle(
+                        fontSize: fontSize,
+                        color: color,
+                        height: 1.5,
+                      ),
+                    ),
+            ],
+          );
+        },
       );
     }
     if (isLatex(text)) {
-      return MathTex(text, fontSize: fontSize, color: color);
+      return _scrollableMath(text);
     }
     return Text(
       text,
@@ -109,9 +163,21 @@ class SmartText extends StatelessWidget {
     );
   }
 
+  Widget _scrollableMath(String formula) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      physics: const BouncingScrollPhysics(),
+      child: MathTex(formula, fontSize: fontSize, color: color, inline: true),
+    );
+  }
+
   List<_MathSegment> _splitInlineMath(String value) {
-    final matches = RegExp(r'\\\((.+?)\\\)|\\\[(.+?)\\\]').allMatches(value).toList();
-    if (matches.isEmpty) return [_MathSegment(value, false)];
+    final matches =
+        RegExp(
+          r'\$\$(.+?)\$\$|\\\((.+?)\\\)|\\\[(.+?)\\\]|\$([^$]+)\$',
+          dotAll: true,
+        ).allMatches(value).toList();
+    if (matches.isEmpty) return _splitLooseMath(value);
 
     final segments = <_MathSegment>[];
     var start = 0;
@@ -119,13 +185,78 @@ class SmartText extends StatelessWidget {
       if (match.start > start) {
         segments.add(_MathSegment(value.substring(start, match.start), false));
       }
-      segments.add(_MathSegment(match.group(1) ?? match.group(2) ?? '', true));
+      segments.add(
+        _MathSegment(
+          match.group(1) ??
+              match.group(2) ??
+              match.group(3) ??
+              match.group(4) ??
+              '',
+          true,
+        ),
+      );
       start = match.end;
     }
     if (start < value.length) {
       segments.add(_MathSegment(value.substring(start), false));
     }
     return segments.where((segment) => segment.text.isNotEmpty).toList();
+  }
+
+  List<_MathSegment> _splitLooseMath(String value) {
+    final segments = <_MathSegment>[];
+    final buffer = StringBuffer();
+    var inCandidate = false;
+
+    void flushCandidate(String text) {
+      if (text.isEmpty) return;
+      final leading = RegExp(r'^\s*').firstMatch(text)?.group(0) ?? '';
+      final trailing = RegExp(r'\s*$').firstMatch(text)?.group(0) ?? '';
+      final core = text.trim();
+      if (_looksLikeLooseMath(core)) {
+        if (leading.isNotEmpty) segments.add(_MathSegment(leading, false));
+        segments.add(_MathSegment(core, true));
+        if (trailing.isNotEmpty) segments.add(_MathSegment(trailing, false));
+      } else {
+        segments.add(_MathSegment(text, false));
+      }
+    }
+
+    void flush() {
+      final text = buffer.toString();
+      buffer.clear();
+      if (inCandidate) {
+        flushCandidate(text);
+      } else if (text.isNotEmpty) {
+        segments.add(_MathSegment(text, false));
+      }
+    }
+
+    for (final rune in value.runes) {
+      final char = String.fromCharCode(rune);
+      final candidate = _isLooseMathChar(char);
+      if (candidate != inCandidate && buffer.isNotEmpty) {
+        flush();
+      }
+      inCandidate = candidate;
+      buffer.write(char);
+    }
+    flush();
+    return segments.where((segment) => segment.text.isNotEmpty).toList();
+  }
+
+  bool _isLooseMathChar(String char) {
+    return RegExp(r'[A-Za-z0-9\s+\-*/=^_(){}\[\]<>.,]').hasMatch(char) ||
+        '∫√π∞≤≥·'.contains(char);
+  }
+
+  bool _looksLikeLooseMath(String text) {
+    if (text.length < 2) return false;
+    final hasMathMarker = RegExp(
+      r'[=^_+\-*/∫√≤≥]|[A-Za-z]\([^)]*\)',
+    ).hasMatch(text);
+    final hasMathLetterOrDigit = RegExp(r'[A-Za-z0-9]').hasMatch(text);
+    return hasMathMarker && hasMathLetterOrDigit;
   }
 }
 

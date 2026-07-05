@@ -6,12 +6,21 @@ from fastapi import APIRouter, Depends, Body
 from sqlalchemy.orm import Session
 
 from ..core.database import (
-    get_db, UserProfile, AnswerRecord, Mistake, LearningLog,
+    get_db, User, UserProfile, AnswerRecord, Mistake, LearningLog,
     Exercise, StudyPlan, gen_id, now
 )
 from ..agents.bridge import agent_service
 
 router = APIRouter()
+
+
+def _ensure_user(user_id: str, db: Session) -> None:
+    if not user_id:
+        return
+    if db.query(User).filter(User.id == user_id).first():
+        return
+    db.add(User(id=user_id, username=user_id, role="student"))
+    db.flush()
 
 
 def _collect_learning_records(user_id: str, db: Session) -> dict:
@@ -50,6 +59,7 @@ def _collect_learning_records(user_id: str, db: Session) -> dict:
 @router.get("/profile/{user_id}", summary="获取学习画像")
 def get_profile(user_id: str, db: Session = Depends(get_db)):
     """获取或生成学生学习画像"""
+    _ensure_user(user_id, db)
     # 先查缓存
     prof = db.query(UserProfile).filter(UserProfile.user_id == user_id).first()
     records = _collect_learning_records(user_id, db)
@@ -85,12 +95,20 @@ def update_profile(
     extra_data: dict = Body(default={}, embed=True),
     db: Session = Depends(get_db),
 ):
+    _ensure_user(user_id, db)
     prof = db.query(UserProfile).filter(UserProfile.user_id == user_id).first()
     if prof:
         merged = {**(prof.profile_data or {}), **extra_data}
         prof.profile_data = merged
         prof.updated_at = now()
-        db.commit()
+    else:
+        prof = UserProfile(
+            id=gen_id(),
+            user_id=user_id,
+            profile_data=extra_data,
+        )
+        db.add(prof)
+    db.commit()
     return {"success": True}
 
 
@@ -103,6 +121,7 @@ def log_action(
     duration_sec: int = Body(default=0, embed=True),
     db: Session = Depends(get_db),
 ):
+    _ensure_user(user_id, db)
     log = LearningLog(
         id=gen_id(),
         user_id=user_id,

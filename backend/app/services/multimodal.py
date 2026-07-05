@@ -15,11 +15,15 @@
 import base64
 import logging
 import os
+from pathlib import Path
 from typing import Optional
 
+from dotenv import load_dotenv
 from openai import OpenAI
 
 logger = logging.getLogger(__name__)
+
+load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 
 # 默认走 Qwen-VL（阿里云百炼），如需切换改这里和 .env
 DEFAULT_MODEL = "qwen-vl-plus"  # 或 qwen-vl-max

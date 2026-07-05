@@ -360,9 +360,19 @@ class AgentService:
         # 去除 markdown 代码块标记
         text = re.sub(r"```json\s*|```\s*", "", text).strip()
 
+        def tolerant_loads(candidate: str):
+            try:
+                return json.loads(candidate)
+            except Exception:
+                # LLM 经常在 JSON 字符串里输出未转义的 LaTeX 反斜杠，如 \text、\frac。
+                # 这些不是合法 JSON escape，会导致整段解析失败；这里只补非法反斜杠。
+                fixed = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', candidate)
+                fixed = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", fixed)
+                return json.loads(fixed)
+
         # ① 直接解析
         try:
-            result = json.loads(text)
+            result = tolerant_loads(text)
             if isinstance(result, dict):
                 return result
             if isinstance(result, list):
@@ -375,7 +385,7 @@ class AgentService:
             candidates = re.findall(pattern, text)
             for candidate in sorted(candidates, key=len, reverse=True):
                 try:
-                    result = json.loads(candidate)
+                    result = tolerant_loads(candidate)
                     if isinstance(result, dict):
                         return result
                     if isinstance(result, list):
@@ -487,12 +497,16 @@ class AgentService:
         client = MultimodalClient()
         import base64
         image_data = base64.b64decode(image_base64)
+        mode_rules = self._homework_mode_rules(mode)
 
         prompt = f"""这是一道学习题目图片。请先识别图片中的完整题干、选项、公式和图形，再解答。
 
 用户问题：{question or "请解答图片中的题目"}
 学生答案：{student_answer or "未提供"}
 辅导模式：{mode}
+
+模式要求：
+{mode_rules}
 
 只输出纯 JSON，不要 markdown，不要解释 JSON 外的文字。
 JSON 字段必须包含：
@@ -513,6 +527,7 @@ JSON 字段必须包含：
 1. 如果无法识别图片中的题干或关键公式，answer_status 写 insufficient，并说明缺少什么。
 2. 禁止输出“识别知识点、整理条件、选择方法、检查答案”这类通用模板。
 3. 数学题要保留公式；选择题要给选项答案并说明关键选项为什么对/错。
+4. JSON 字符串中的公式请尽量用普通文本写法，例如 R_parallel、R1、R2、U_parallel；如果必须使用 LaTeX，反斜杠必须写成双反斜杠。
 """
         result_text = client.understand_image(
             image_data=image_data,
@@ -522,17 +537,24 @@ JSON 字段必须包含：
         parsed = self._parse_json_response(result_text)
         if parsed and "raw" not in parsed:
             return parsed
+        if parsed and "raw" in parsed:
+            reparsed = self._parse_json_response(parsed.get("raw", ""))
+            if reparsed and "raw" not in reparsed:
+                return reparsed
 
         # 兜底：把多模态结果包装为 dict
         return {
-            "solving_approach": result_text[:500],
-            "complete_steps": [result_text],
+            "answer_status": "insufficient",
+            "question_recognition": "",
+            "solving_approach": "图片题结果没有解析成有效结构，不能把原始 JSON 或模板当作解答展示。",
+            "complete_steps": ["请重新拍清题目，或把题干文字补充到输入框。"],
             "final_answer": "",
-            "common_mistakes": [],
-            "note": "此为多模态模型直接输出，已包含图片理解结果",
+            "common_mistakes": ["不要把模型返回的原始 JSON 当成解题步骤。"],
+            "next_step_hint": "补充题干文字后，我再按模式重新引导。",
         }
 
     def _llm_homework_tutor(self, question, student_answer, mode):
+        mode_rules = self._homework_mode_rules(mode)
         sys_p = (
             "你是一位严谨的作业辅导老师。只输出纯 JSON，不含 markdown 代码块。"
             "必须真正代入题目求解，禁止输出通用模板。"
@@ -540,11 +562,33 @@ JSON 字段必须包含：
         )
         usr_p = (
             f"题目：{question}\n学生答案：{student_answer}\n辅导模式：{mode}\n\n"
+            f"模式要求：\n{mode_rules}\n\n"
             "输出 JSON 字段：answer_status(ok/insufficient), question_recognition, knowledge_point, question_type, "
             "solving_approach, complete_steps(list), formulas(list), final_answer, common_mistakes(list), next_step_hint。\n"
             "要求：complete_steps 必须引用题目中的具体表达式、数字或条件；final_answer 能算出时必须填写。"
         )
         return self._parse_json_response(self._call_llm(sys_p, usr_p))
+
+    def _homework_mode_rules(self, mode: str) -> str:
+        mode = (mode or "step_by_step").strip().lower()
+        if mode == "hint":
+            return (
+                "提示模式：不要直接给最终答案。solving_approach 写成陪伴式引导；"
+                "complete_steps 写 3-5 个递进提示问题，每一步都只提示下一步思路；"
+                "final_answer 留空或只写“完成提示后可切换快速回答查看完整解”；"
+                "common_mistakes 写容易走偏的提醒。"
+            )
+        if mode == "correction":
+            return (
+                "纠错诊断模式：优先判断学生答案或题干中可能的错误。"
+                "common_mistakes 必须写具体错误点、原因和修正方向；"
+                "complete_steps 写修正后的正确解法步骤；final_answer 必须给正确答案。"
+            )
+        return (
+            "快速回答模式：直接给完整、标准、详细的解答。"
+            "complete_steps 要从题目条件出发逐步推导；formulas 给关键公式；"
+            "final_answer 必须清晰填写；common_mistakes 写做题提醒。"
+        )
 
     def _normalize_homework_result(self, result: Dict[str, Any], question: str, image_based: bool = False) -> Dict[str, Any]:
         """Flatten workflow output and reject empty/template tutoring as a real answer."""

@@ -6,6 +6,7 @@ import base64
 import io
 import os
 import time
+from pathlib import Path
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
@@ -14,6 +15,13 @@ from PIL import Image
 
 from ..config import ExtractionConfig
 from ..exceptions import OCRConfigurationError, OCRDependencyError, OCRRuntimeError
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+except Exception:
+    pass
 
 
 @dataclass
