@@ -1,0 +1,13 @@
+{
+  "pythonVersion": "3.12",
+  "include": [
+    "agents",
+    "rag",
+    "backend"
+  ],
+  "extraPaths": [
+    "."
+  ],
+  "reportMissingImports": false,
+  "reportMissingModuleSource": false
+}

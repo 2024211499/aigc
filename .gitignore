@@ -1,0 +1,168 @@
+# ── 环境变量 ────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Python 虚拟环境 ──────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── Python 编译缓存 ──────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+
+# ── 分发与打包 ───────────────────────────────────────
+dist/
+build/
+*.egg-info/
+*.egg
+.eggs/
+wheels/
+
+# ── 测试与覆盖率 ─────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# ── 类型检查 ─────────────────────────────────────────
+.mypy_cache/
+.pyright/
+
+# ── 编辑器 ───────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+Thumbs.db
+
+# ══════════════════════════════════════════════════════
+#   1号 RAG 模块
+# ══════════════════════════════════════════════════════
+
+# Embedding 缓存（体积大，可本地复用）
+rag/embedding_cache/
+embedding_cache/
+*.pkl
+
+# 向量库持久化数据
+rag/vectorstore/
+vectorstore/
+chroma_db/
+
+# OCR 临时文件
+rag/ocr_tmp/
+
+# ══════════════════════════════════════════════════════
+#   2号 Agent 模块
+# ══════════════════════════════════════════════════════
+
+# CrewAI 运行日志
+agents/*.log
+agents/logs/
+
+# 内存数据库数据（PostgreSQL dump / Redis dump）
+*.rdb
+*.dump
+
+# ══════════════════════════════════════════════════════
+#   3号 后端
+# ══════════════════════════════════════════════════════
+
+# SQLite 数据库文件
+backend/data/aigc.db
+backend/data/aigc.db-shm
+backend/data/aigc.db-wal
+*.db
+*.sqlite
+*.sqlite3
+
+# 用户上传的文件
+backend/data/uploads/
+
+# 导出文件（PDF/Word/Markdown 生成物）
+backend/data/exports/
+
+# 向量库
+backend/data/vectorstore/
+
+# Embedding 缓存
+backend/data/embed_cache/
+
+# 日志
+backend/data/logs/
+*.log
+
+# data 目录整体（运行时自动创建）
+backend/data/
+
+# ══════════════════════════════════════════════════════
+#   4号 前端
+# ══════════════════════════════════════════════════════
+
+frontend/node_modules/
+frontend/.next/
+frontend/dist/
+frontend/build/
+frontend/.nuxt/
+frontend/.output/
+frontend/.cache/
+frontend/*.local
+
+# ══════════════════════════════════════════════════════
+#   其他
+# ══════════════════════════════════════════════════════
+
+# 压缩包（打包产物不入库）
+*.zip
+*.tar.gz
+*.rar
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# 系统文件
+.DS_Store
+desktop.ini
+
+# 临时文件
+/backend/tests/test_cache.json
+/rag_restructure.py
+/cleanup_rag_shims.ps1
+/前端交互设计方案.html
+/前端对接指南.html
+
+# ── Flutter ──────────────────────────────────────────
+aigc_app/.dart_tool/
+aigc_app/build/
+aigc_app/.flutter-plugins
+aigc_app/.flutter-plugins-dependencies
+aigc_app/.packages
+aigc_app/.pub-cache/
+aigc_app/android/.gradle/
+aigc_app/android/app/build/
+aigc_app/android/build/
+aigc_app/android/local.properties
+aigc_app/ios/Pods/
+aigc_app/ios/.symlinks/
+aigc_app/ios/Flutter/Flutter.framework
+aigc_app/.idea/libraries/
+aigc_app/.idea/workspace.xml
+aigc_app/.pub/
+aigc_app/pubspec.lock
+
+# ── 测试材料 ──
+test_materials/
+
+# ── Windows ──
+*.exe
+*.dll
+*.so
+*.dylib
